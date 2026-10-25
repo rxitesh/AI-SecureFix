@@ -4,6 +4,10 @@ from backend.scanner import scan_file
 from backend.remediation import remediate_file
 from backend.verifier import verify_remediation
 from pydantic import BaseModel
+from backend.dynamic_remediation import remediate_code
+from backend.dynamic_verifier import verify_dynamic_code
+from backend.ai_remediation import ai_remediate_code
+from backend.ai_verifier import verify_ai_code
 
 app = FastAPI(
     title="AI SecureFix API",
@@ -55,3 +59,19 @@ def scan_code(request: CodeRequest):
     )
 
     return scan_file("temp/submitted_code.py")
+
+@app.post("/remediate-code")
+def remediate_submitted_code(request: CodeRequest):
+    return remediate_code(request.code)
+
+@app.post("/verify-code")
+def verify_submitted_code(request: CodeRequest):
+    return verify_dynamic_code(request.code)
+
+@app.post("/ai-remediate-code")
+def ai_remediate_submitted_code(request: CodeRequest):
+    return ai_remediate_code(request.code)
+
+@app.post("/ai-verify-code")
+def ai_verify_submitted_code(request: CodeRequest):
+    return verify_ai_code(request.code)
