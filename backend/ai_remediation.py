@@ -1,10 +1,43 @@
+import time
 from google import genai
-
 
 client = genai.Client()
 
 
-def ai_remediate_code(code: str):
+def clean_markdown_fences(code: str) -> str:
+    """Strip markdown code block fences if the LLM includes them."""
+    cleaned = code.strip()
+    if cleaned.startswith("```python"):
+        cleaned = cleaned[len("```python"):].strip()
+    elif cleaned.startswith("```"):
+        cleaned = cleaned[len("```"):].strip()
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3].strip()
+    return cleaned
+
+def is_retryable_error(error: Exception) -> bool:
+    """Identify temporary availability, network drop, and rate-limit errors."""
+    if isinstance(error, (ConnectionError, TimeoutError)):
+        return True
+
+    error_str = str(error).upper()
+    retryable_keywords = [
+        "503",
+        "UNAVAILABLE",
+        "429",
+        "RESOURCE_EXHAUSTED",
+        "HIGH DEMAND",
+        "RATE LIMIT",
+        "TIMEOUT",
+        "DEADLINE_EXCEEDED",
+        "DISCONNECTED",
+        "CONNECTION",
+        "RESET BY PEER",
+        "REMOTE",
+    ]
+    return any(keyword in error_str for keyword in retryable_keywords)
+
+def ai_remediate_code(code: str, max_retries: int = 3, initial_delay: float = 2.0):
     prompt = f"""
 You are a secure Python code remediation assistant.
 
@@ -23,25 +56,40 @@ Python code:
 {code}
 """
 
-    try:
-        response = client.models.generate_content(
-            model="gemini-3.8-flash",
-            contents=prompt
-        )
+    last_error = None
+    delay = initial_delay
 
-        fixed_code = response.text.strip()
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = client.models.generate_content(
+                model="gemini-3.6-flash",
+                contents=prompt
+            )
 
-        return {
-            "success": True,
-            "method": "AI-Based",
-            "model": "gemini-3.8-flash",
-            "original_code": code,
-            "fixed_code": fixed_code
-        }
+            raw_text = response.text or ""
+            fixed_code = clean_markdown_fences(raw_text)
 
-    except Exception as error:
-        return {
-            "success": False,
-            "method": "AI-Based",
-            "error": str(error)
-        }
+            return {
+                "success": True,
+                "method": "AI-Based",
+                "model": "gemini-3.6-flash",
+                "attempts": attempt,
+                "original_code": code,
+                "fixed_code": fixed_code
+            }
+
+        except Exception as error:
+            last_error = error
+            # If it's a temporary error and we have attempts left, wait and retry
+            if attempt < max_retries and is_retryable_error(error):
+                time.sleep(delay)
+                delay *= 2  # Exponential backoff: 2s -> 4s -> 8s
+                continue
+            break
+
+    return {
+        "success": False,
+        "method": "AI-Based",
+        "attempts": attempt,
+        "error": str(last_error)
+    }
